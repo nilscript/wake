@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+
+from argparse import ArgumentParser
+import socket
+import sys
+
+BROADCAST_IP = "255.255.255.255"
+DEFAULT_PORT = 9
+
+
+def setup_arguments() -> ArgumentParser:
+    parser = ArgumentParser()
+    parser.add_argument("--hosts", default="/etc/hosts")
+    parser.add_argument("--macs", default="/etc/macs")
+    parser.add_argument("targets", nargs="+")
+    return parser
+
+
+def uncomment(s: str, comment: str):
+    uncomment = s.split(comment)
+    return uncomment[0] if uncomment else ""
+
+
+def grep_row(file: str, patterns: list):
+    """Opens and searches entire file for matches.
+    Returns the entire matched line as a splitted list"""
+    with open(file) as f:
+        while line := f.readline():
+            line = uncomment(line, "#").split()
+            for pattern in patterns:
+                if pattern in line:
+                    yield pattern, line[0]
+
+
+def split_ports(targets: str):
+    ports = dict()
+
+    for i in range(len(targets)):
+        if ":" in targets[i]:
+            [target, port] = targets[i].split(":")
+            ports[target] = int(port)
+            targets[i] = target
+
+    return ports
+
+
+def get_macs(macs_file, targets):
+    macs = dict()
+
+    for target, mac in grep_row(macs_file, targets):
+        if target in macs:
+            macs[target].append(mac)
+        else:
+            macs[target] = [mac]
+
+    return macs
+
+
+def remove_separators(mac: str, separators=[":", "-"]):
+    for sep in separators:
+        mac = mac.replace(sep, "")
+
+    return mac
+
+
+def magic_packet(mac: str):
+    "https://en.wikipedia.org/wiki/Wake-on-LAN#Magic_packet"
+    padding = "F" * 2 * 6
+    return bytes.fromhex(padding + mac * 16)
+
+
+def send_packets(ip, port: int, packets: list):
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.connect((ip, port))
+        for packet in packets:
+            sock.send(packet)
+
+
+def wake(ips: dict, ports: dict, macs: dict, target: str):
+    ip = ips.get(target, BROADCAST_IP)
+    port = ports.get(target, DEFAULT_PORT)
+
+    if target not in macs:
+        print(f"Could not wake {target}. No mac found.", file=sys.stderr)
+        return 1
+
+    packets = map(magic_packet, map(remove_separators, macs[target]))
+
+    print(f"Waking {target} with address {ip}:{port} and macs of %s..." % macs[target])
+    send_packets(ip, port, packets)
+
+    return 0
+
+
+if __name__ == "__main__":
+    args = setup_arguments().parse_args()
+
+    ports = split_ports(args.targets)
+    ips = dict(grep_row(args.hosts, args.targets))
+    macs = get_macs(args.macs, args.targets)
+
+    exit_code = 0
+
+    for target in args.targets:
+        exit_code += wake(ips, ports, macs, target)
+
+    exit(exit_code)
