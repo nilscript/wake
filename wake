@@ -10,6 +10,7 @@ DEFAULT_PORT = 9
 
 def setup_arguments() -> ArgumentParser:
     parser = ArgumentParser()
+    parser.add_argument("--use-ip", action="store_true")
     parser.add_argument("--hosts", default="/etc/hosts")
     parser.add_argument("--macs", default="/etc/macs")
     parser.add_argument("targets", nargs="+")
@@ -97,7 +98,7 @@ if __name__ == "__main__":
     args = setup_arguments().parse_args()
 
     ports = split_ports(args.targets)
-    ips = dict(grep_row(args.hosts, args.targets))
+    ips = dict(grep_row(args.hosts, args.targets) if args.use_ip else ())
     macs = get_macs(args.macs, args.targets)
 
     exit_code = 0
